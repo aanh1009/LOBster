@@ -71,14 +71,86 @@ class OrderBook:
 
     def add_limit_order(self, order: Order) -> List[Trade]:
         self._order_index[order.order_id] = order
-        self._rest(order)
-        return []  # matching not yet implemented
+        trades = self._match_limit(order)
+        if order.is_active:
+            self._rest(order)
+        return trades
 
     def add_market_order(self, order: Order) -> List[Trade]:
-        return []  # TODO
+        self._order_index[order.order_id] = order
+        return self._match_market(order)
 
     def cancel_order(self, order_id: str) -> bool:
         return False  # TODO
+
+    def _match_limit(self, order: Order) -> List[Trade]:
+        trades: List[Trade] = []
+        if order.side == Side.BID:
+            while order.is_active and self._asks:
+                best_ask = self._asks.keys()[0]
+                if order.price < best_ask:
+                    break
+                level = self._asks[best_ask]
+                trades += self._fill_against_level(order, level, best_ask)
+                if level.is_empty:
+                    del self._asks[best_ask]
+        else:
+            while order.is_active and self._bids:
+                neg_best = self._bids.keys()[0]
+                best_bid = -neg_best
+                if order.price > best_bid:
+                    break
+                level = self._bids[neg_best]
+                trades += self._fill_against_level(order, level, best_bid)
+                if level.is_empty:
+                    del self._bids[neg_best]
+        return trades
+
+    def _match_market(self, order: Order) -> List[Trade]:
+        trades: List[Trade] = []
+        if order.side == Side.BID:
+            while order.is_active and self._asks:
+                best_ask = self._asks.keys()[0]
+                level = self._asks[best_ask]
+                trades += self._fill_against_level(order, level, best_ask)
+                if level.is_empty:
+                    del self._asks[best_ask]
+        else:
+            while order.is_active and self._bids:
+                neg_best = self._bids.keys()[0]
+                level = self._bids[neg_best]
+                trades += self._fill_against_level(order, level, -neg_best)
+                if level.is_empty:
+                    del self._bids[neg_best]
+        return trades
+
+    def _fill_against_level(self, aggressor: Order, level: PriceLevel,
+                            exec_price: float) -> List[Trade]:
+        trades: List[Trade] = []
+        while aggressor.is_active:
+            passive = level.peek()
+            if passive is None:
+                break
+            fill_qty = min(aggressor.remaining_quantity, passive.remaining_quantity)
+            aggressor.fill(fill_qty)
+            passive.fill(fill_qty)
+            level.total_volume = max(0.0, level.total_volume - fill_qty)
+            if not passive.is_active:
+                level.orders.popleft()
+                level.order_count -= 1
+            if aggressor.side == Side.BID:
+                buyer_oid, seller_oid = aggressor.order_id, passive.order_id
+                buyer_tid, seller_tid = aggressor.trader_id, passive.trader_id
+            else:
+                buyer_oid, seller_oid = passive.order_id, aggressor.order_id
+                buyer_tid, seller_tid = passive.trader_id, aggressor.trader_id
+            trade = Trade(price=exec_price, quantity=fill_qty,
+                          aggressor_side=aggressor.side,
+                          buyer_order_id=buyer_oid, seller_order_id=seller_oid,
+                          buyer_trader_id=buyer_tid, seller_trader_id=seller_tid)
+            trades.append(trade)
+            self.trades.append(trade)
+        return trades
 
     def _rest(self, order: Order) -> None:
         key, side = self._side_key_and_dict(order)
