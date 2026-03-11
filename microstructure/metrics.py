@@ -31,3 +31,41 @@ def kyle_lambda(mid_prices, signed_volumes, interval_seconds=60.0):
             else "low adverse selection"
         ),
     }
+
+
+def vpin(trade_prices, trade_volumes, trade_sides, bucket_size=None, n_buckets=50):
+    """Easley, Lopez de Prado, O'Hara (2012) VPIN toxicity estimator."""
+    from typing import List
+    volumes = np.asarray(trade_volumes, dtype=float)
+    sides   = np.asarray(trade_sides,   dtype=float)
+    if bucket_size is None:
+        bucket_size = volumes.sum() / n_buckets
+    bucket_vpins: List[float] = []
+    bucket_buy = bucket_sell = accumulated = 0.0
+    for vol, side in zip(volumes, sides):
+        if side > 0:
+            bucket_buy += vol
+        else:
+            bucket_sell += vol
+        accumulated += vol
+        while accumulated >= bucket_size:
+            bucket_vpins.append(abs(bucket_buy - bucket_sell) / bucket_size)
+            overflow = accumulated - bucket_size
+            accumulated = overflow
+            if side > 0:
+                bucket_buy, bucket_sell = overflow, 0.0
+            else:
+                bucket_buy, bucket_sell = 0.0, overflow
+    arr = np.array(bucket_vpins)
+    return {
+        "vpin": float(arr.mean()) if len(arr) > 0 else np.nan,
+        "vpin_rolling": arr.tolist(),
+        "bucket_size": bucket_size,
+        "n_buckets_filled": len(arr),
+        "interpretation": (
+            "high toxicity - possible informed trading"
+            if (arr.mean() if len(arr) else 0) > 0.4
+            else "moderate" if (arr.mean() if len(arr) else 0) > 0.2
+            else "low toxicity"
+        ),
+    }
