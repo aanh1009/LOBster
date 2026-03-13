@@ -69,3 +69,32 @@ def vpin(trade_prices, trade_volumes, trade_sides, bucket_size=None, n_buckets=5
             else "low toxicity"
         ),
     }
+
+
+def order_flow_imbalance(bid_prices, ask_prices, bid_volumes, ask_volumes):
+    """Cont, Kukanov, Stoikov (2014) Order Flow Imbalance."""
+    bp = np.asarray(bid_prices,  dtype=float)
+    ap = np.asarray(ask_prices,  dtype=float)
+    bv = np.asarray(bid_volumes, dtype=float)
+    av = np.asarray(ask_volumes, dtype=float)
+    delta_bid = (bv[1:] * (bp[1:] >= bp[:-1]).astype(float)
+                 - bv[:-1] * (bp[1:] <= bp[:-1]).astype(float))
+    delta_ask = (av[1:] * (ap[1:] <= ap[:-1]).astype(float)
+                 - av[:-1] * (ap[1:] >= ap[:-1]).astype(float))
+    ofi = delta_bid - delta_ask
+    mid = (bp + ap) / 2.0
+    delta_mid = np.diff(mid)
+    ofi_aligned = ofi[:len(delta_mid)]
+    if np.std(ofi_aligned) > 1e-12 and np.std(delta_mid) > 1e-12:
+        corr = float(np.corrcoef(ofi_aligned, delta_mid)[0, 1])
+    else:
+        corr = np.nan
+    return {
+        "ofi_series": ofi.tolist(),
+        "mean_ofi": float(ofi.mean()),
+        "ofi_price_correlation": corr,
+        "interpretation": (
+            f"OFI explains {corr**2*100:.1f}% of midprice variance"
+            if not np.isnan(corr) else "insufficient data"
+        ),
+    }
