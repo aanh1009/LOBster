@@ -65,3 +65,32 @@ class Strategy(ABC):
     def on_event(self, ctx: StrategyContext, event: dict) -> None: ...
     def on_start(self, ctx: StrategyContext) -> None: pass
     def on_end(self, ctx: StrategyContext) -> None: pass
+
+
+class MarketMaker(Strategy):
+    """Quotes a two-sided market around the current midprice."""
+    def __init__(self, half_spread=0.03, quote_qty=100.0,
+                 max_inventory=500.0, quote_interval=2.0, tick_size=0.01):
+        self.half_spread   = half_spread
+        self.quote_qty     = quote_qty
+        self.max_inventory = max_inventory
+        self.quote_interval = quote_interval
+        self.tick_size     = tick_size
+        self._last_quote_t = -np.inf
+
+    def on_event(self, ctx, event):
+        if ctx.sim_time - self._last_quote_t < self.quote_interval:
+            return
+        mid = ctx.book.mid_price
+        if mid is None:
+            return
+        ctx.cancel_all()
+        if abs(ctx.position) > self.max_inventory:
+            side = Side.ASK if ctx.position > 0 else Side.BID
+            ctx.submit_market(side, abs(ctx.position) / 2)
+        bid = round((mid - self.half_spread) / self.tick_size) * self.tick_size
+        ask = round((mid + self.half_spread) / self.tick_size) * self.tick_size
+        ctx.submit_limit(Side.BID, bid, self.quote_qty)
+        ctx.submit_limit(Side.ASK, ask, self.quote_qty)
+        ctx.snapshot_pnl()
+        self._last_quote_t = ctx.sim_time
